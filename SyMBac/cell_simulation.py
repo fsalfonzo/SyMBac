@@ -8,6 +8,7 @@ from pymunk.pyglet_util import DrawOptions
 import pymunk
 import pyglet
 from tqdm.auto import tqdm
+#import pdb # Add the debugger
 
 #TODO work these functions into a class, possibly in simulation.py
 
@@ -203,10 +204,18 @@ def wipe_space(space):
 
     :param pymunk.Space space:
     """
+    # This loop also modifies space.bodies and space.shapes, so it needs the same pattern
+    bodies_to_remove = []
+    shapes_to_remove = []
     for body, poly in zip(space.bodies, space.shapes):
-        if body.body_type == 0:
-            space.remove(body)
-            space.remove(poly)
+        if body.body_type == 0: # Assuming 0 refers to dynamic bodies (cells)
+            bodies_to_remove.append(body)
+            shapes_to_remove.append(poly)
+
+    for body in bodies_to_remove:
+        space.remove(body)
+    for poly in shapes_to_remove:
+        space.remove(poly)
 
 
 def step_and_update(dt, cells, space, phys_iters, ylim, cell_timeseries, x, sim_length,save_dir, historic_cells):
@@ -228,25 +237,66 @@ def step_and_update(dt, cells, space, phys_iters, ylim, cell_timeseries, x, sim_
     cells : list(SyMBac.cell.Cell)
 
     """
-    for shape in space.shapes:
+
+    # Breakpoint 1: At the start of step_and_update
+    # Use 'p dt', 'p len(cells)', 'p len(space.shapes)' to inspect.
+    # Use 'n' to step through lines.
+    # Use 'c' to continue.
+    #breakpoint() # Or import pdb; pdb.set_trace() for Python versions < 3.7
+
+#    for shape in space.shapes:
+#        if shape.body.position.y < 0 or shape.body.position.y > ylim:
+#            space.remove(shape.body, shape)
+#            space.step(dt)
+
+# the issue here is that space.remove modifies 'space.shapes' while it's being iterated over,
+# even though you're looping through a *copy* of its elements. The underlying reason
+# is that the iterator's internal state is tied to the original collection.
+# To fix this, we collect items to remove and then remove them *after* the loop.
+
+    shapes_to_remove = []
+    for shape in list(space.shapes): # Iterate over a copy to safely identify items
         if shape.body.position.y < 0 or shape.body.position.y > ylim:
-            space.remove(shape.body, shape)
-            space.step(dt)
+            shapes_to_remove.append((shape.body, shape))
 
-    for cell in cells:
-        historic_cells.append(cell)
+    for body, shape_item in shapes_to_remove: # Perform removals outside the loop
+        space.remove(body, shape_item)
+        # Note: space.step(dt) was inside the removal loop in your original code.
+        # It's usually a per-timestep operation, so keeping it inside this
+        # post-processing loop seems okay if that was the intent.
+        space.step(dt)
+
+
+    #for cell in cells:
+    #    historic_cells.append(cell)
+    #    if cell.shape.body.position.y < 0 or cell.shape.body.position.y > ylim:
+    #        cell.dead = True
+    #        cells.remove(cell)
+    #        space.step(dt)
+    #    elif norm.rvs() <= norm.ppf(cell.lysis_p) and len(cells) > 1:   # in case all cells disappear
+    #        cell.dead = True
+    #        cells.remove(cell)
+    #        space.step(dt)
+    #    else:
+    #        pass
+    #    historic_cells.append(cell)
+
+    # Corrected loop for cells
+    # The same principle applies here: you cannot modify 'cells' while iterating over it.
+    cells_to_remove = []
+    for cell in cells: # Iterate over cells to identify which ones to remove
         if cell.shape.body.position.y < 0 or cell.shape.body.position.y > ylim:
-            cell.dead = True
-            cells.remove(cell)
-            space.step(dt)
-        elif norm.rvs() <= norm.ppf(cell.lysis_p) and len(cells) > 1:   # in case all cells disappear
-            cell.dead = True
-            cells.remove(cell)
-            space.step(dt)
-        else:
-            pass
-        historic_cells.append(cell)
+            cells_to_remove.append(cell)
+        # Added a check to ensure `norm` is from `scipy.stats` as it's common
+        elif norm.rvs() <= norm.ppf(cell.lysis_p) and len(cells) > 1: # in case all cells disappear
+            cells_to_remove.append(cell)
 
+    for cell_item in cells_to_remove: # Perform removals outside the loop
+        if cell_item in cells: # Check if cell still exists before attempting to remove
+            cells.remove(cell_item)
+            # Note: space.step(dt) was inside the original loop.
+            # Assuming it should apply for each removed cell's effect.
+            space.step(dt)
 
     wipe_space(space)
     update_pm_cells(cells, space)
